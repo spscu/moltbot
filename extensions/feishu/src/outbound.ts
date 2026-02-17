@@ -1,7 +1,8 @@
-import type { ChannelOutboundAdapter } from "openclaw/plugin-sdk";
+import { type ChannelOutboundAdapter, DEFAULT_ACCOUNT_ID } from "openclaw/plugin-sdk";
 import { sendMediaFeishu } from "./media.js";
 import { getFeishuRuntime } from "./runtime.js";
 import { sendMessageFeishu } from "./send.js";
+import { forwardMessageToMentionedBots } from "./forward.js";
 
 export const feishuOutbound: ChannelOutboundAdapter = {
   deliveryMode: "direct",
@@ -10,6 +11,17 @@ export const feishuOutbound: ChannelOutboundAdapter = {
   textChunkLimit: 4000,
   sendText: async ({ cfg, to, text, accountId }) => {
     const result = await sendMessageFeishu({ cfg, to, text, accountId: accountId ?? undefined });
+    // Try forwarding to other bots if this was a group message
+    // Best-effort: don't block or fail if forwarding fails
+    void forwardMessageToMentionedBots({
+      cfg,
+      content: text,
+      chatId: result.chatId,
+      chatType: "group", // Assuming group for now, or check ID prefix
+      senderAccountId: accountId ?? DEFAULT_ACCOUNT_ID, // Need to resolve proper account ID if missing
+    }).catch((err) => {
+      console.error(`[feishu] forwarding failed:`, err);
+    });
     return { channel: "feishu", ...result };
   },
   sendMedia: async ({ cfg, to, text, mediaUrl, accountId }) => {

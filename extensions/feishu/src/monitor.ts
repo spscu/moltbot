@@ -1,6 +1,14 @@
 import * as Lark from "@larksuiteoapi/node-sdk";
 import * as http from "http";
 import {
+  wsClients,
+  httpServers,
+  botOpenIds,
+  botIdCandidates,
+  botIdToAccountId,
+  botNames,
+} from "./state.js";
+import {
   type ClawdbotConfig,
   type RuntimeEnv,
   type HistoryEntry,
@@ -21,12 +29,7 @@ export type MonitorFeishuOpts = {
 };
 
 // Per-account WebSocket clients, HTTP servers, and bot info
-const wsClients = new Map<string, Lark.WSClient>();
-const httpServers = new Map<string, http.Server>();
-const botOpenIds = new Map<string, string>();
-const botIdCandidates = new Map<string, string[]>();
-// Reverse mapping: bot open_id -> account_id (for multi-bot mention forwarding)
-export const botIdToAccountId = new Map<string, string>();
+// Moved to state.ts to avoid circular dependencies
 const FEISHU_WEBHOOK_MAX_BODY_BYTES = 1024 * 1024;
 const FEISHU_WEBHOOK_BODY_TIMEOUT_MS = 30_000;
 
@@ -47,6 +50,16 @@ async function fetchBotIdentity(account: ResolvedFeishuAccount): Promise<{
     return {};
   }
 }
+
+/**
+ * Process bot-to-bot mention forwarding for outgoing messages.
+ * When a bot sends a message that mentions another bot in a group,
+ * that message is also forwarded to the mentioned bot for processing.
+ *
+ * This enables scenarios like: Manager bot sending "@Reviewer please review this"
+ * -> Reviewer bot also processes that message as input
+ */
+
 
 /**
  * Register common event handlers on an EventDispatcher.
@@ -171,7 +184,7 @@ async function monitorSingleAccount(params: MonitorAccountParams): Promise<void>
     .filter(Boolean);
   botOpenIds.set(accountId, botOpenId ?? "");
   botIdCandidates.set(accountId, candidates);
-  
+
   // Populate reverse mapping for mention forwarding
   if (botOpenId) {
     botIdToAccountId.set(botOpenId, accountId);
@@ -179,7 +192,13 @@ async function monitorSingleAccount(params: MonitorAccountParams): Promise<void>
   for (const id of candidates) {
     botIdToAccountId.set(id, accountId);
   }
-  
+
+  // Register bot name if configured
+  const botName = account.config.botName ?? account.name;
+  if (botName) {
+    botNames.set(accountId, botName);
+  }
+
   log(`feishu[${accountId}]: bot open_id resolved: ${botOpenId ?? "unknown"}`);
 
   const connectionMode = account.config.connectionMode ?? "websocket";

@@ -120,6 +120,7 @@ export const FeishuAccountConfigSchema = z
   .object({
     enabled: z.boolean().optional(),
     name: z.string().optional(), // Display name for this account
+    botName: z.string().optional(), // Bot name for mention detection
     appId: z.string().optional(),
     appSecret: z.string().optional(),
     encryptKey: z.string().optional(),
@@ -155,6 +156,7 @@ export const FeishuAccountConfigSchema = z
 export const FeishuConfigSchema = z
   .object({
     enabled: z.boolean().optional(),
+    botName: z.string().optional(), // Top-level bot name (inherited)
     // Top-level credentials (backward compatible for single-account mode)
     appId: z.string().optional(),
     appSecret: z.string().optional(),
