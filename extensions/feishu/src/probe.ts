@@ -1,5 +1,6 @@
 import type { FeishuProbeResult } from "./types.js";
 import { createFeishuClient, type FeishuClientCredentials } from "./client.js";
+import { withFeishuRetry } from "./send.js";
 
 export async function probeFeishu(creds?: FeishuClientCredentials): Promise<FeishuProbeResult> {
   if (!creds?.appId || !creds?.appSecret) {
@@ -13,11 +14,11 @@ export async function probeFeishu(creds?: FeishuClientCredentials): Promise<Feis
     const client = createFeishuClient(creds);
     // Use bot/v3/info API to get bot information
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SDK generic request method
-    const response = await (client as any).request({
+    const response: any = await withFeishuRetry(() => (client as any).request({
       method: "GET",
       url: "/open-apis/bot/v3/info",
       data: {},
-    });
+    }));
 
     if (response.code !== 0) {
       return {

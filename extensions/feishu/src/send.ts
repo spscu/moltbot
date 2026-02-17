@@ -36,7 +36,7 @@ function isRetryableFeishuError(err: unknown): boolean {
   return false;
 }
 
-async function withFeishuRetry<T>(op: () => Promise<T>, maxAttempts = 3): Promise<T> {
+export async function withFeishuRetry<T>(op: () => Promise<T>, maxAttempts = 3): Promise<T> {
   let lastErr: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
@@ -228,8 +228,8 @@ export async function sendMessageFeishu(
   const { content, msgType } = mentionNormalized.hasAtMarkup
     ? buildFeishuTextMessagePayload({ messageText: mentionNormalized.text })
     : buildFeishuPostMessagePayload({
-        messageText: getFeishuRuntime().channel.text.convertMarkdownTables(rawText, tableMode),
-      });
+      messageText: getFeishuRuntime().channel.text.convertMarkdownTables(rawText, tableMode),
+    });
 
   if (replyToMessageId) {
     const response = await withFeishuRetry(() =>

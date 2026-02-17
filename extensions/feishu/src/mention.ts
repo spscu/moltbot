@@ -9,7 +9,8 @@ export type MentionTarget = {
   key: string; // Placeholder in original message, e.g. @_user_1
 };
 
-function resolveMentionId(mention: FeishuMessageEvent["message"]["mentions"][number]): string {
+type MentionItem = Exclude<FeishuMessageEvent["message"]["mentions"], undefined>[number];
+function resolveMentionId(mention: MentionItem): string {
   return (
     String(
       mention.id.open_id ?? mention.id.user_id ?? mention.id.union_id ?? "",
@@ -27,6 +28,31 @@ function normalizeBotIds(botIdOrIds?: string | string[]): Set<string> {
 }
 
 /**
+ * Extract all user IDs mentioned in message content via fallback parsing
+ * This handles bot-to-bot mentions where Feishu API doesn't populate mentions array
+ */
+function extractMentionIdsFromContent(content: string): string[] {
+  const ids: string[] = [];
+  const patterns = [
+    /<at\s+id\s*=\s*["']?([^"'\s>]+)["']?\s*[>\s]/gi,
+    /<at\s+user_id\s*=\s*["']?([^"'\s>]+)["']?\s*[>\s]/gi,
+    /["']?(?:id|user_id)["']?\s*:\s*["']?([^"',\s}]+)["']?/gi,
+  ];
+  
+  for (const pattern of patterns) {
+    let match;
+    while ((match = pattern.exec(content)) !== null) {
+      const id = match[1]?.trim();
+      if (id && !ids.includes(id)) {
+        ids.push(id);
+      }
+    }
+  }
+  
+  return ids;
+}
+
+/**
  * Extract mention targets from message event (excluding the bot itself)
  */
 export function extractMentionTargets(
@@ -36,7 +62,8 @@ export function extractMentionTargets(
   const mentions = event.message.mentions ?? [];
   const botIds = normalizeBotIds(botIdOrIds);
 
-  return mentions
+  // Primary extraction from API-provided mentions array
+  let targets = mentions
     .filter((m) => {
       const mentionId = resolveMentionId(m);
       if (!mentionId) {
@@ -53,6 +80,26 @@ export function extractMentionTargets(
       name: m.name,
       key: m.key,
     }));
+
+  // Fallback: if mentions array is empty (bot-to-bot scenario), scan content
+  if (targets.length === 0 && mentions.length === 0) {
+    const content = String(event.message.content ?? "");
+    const extractedIds = extractMentionIdsFromContent(content);
+    
+    // Filter out bot IDs
+    const mentionedIds = extractedIds.filter((id) => !botIds.has(id));
+    
+    // Convert to MentionTarget format
+    // In fallback mode, we don't have display names or keys from API,
+    // so use the ID as the display name
+    targets = mentionedIds.map((openId) => ({
+      openId,
+      name: openId,
+      key: `@${openId}`, // synthetic key for fallback
+    }));
+  }
+
+  return targets;
 }
 
 /**
@@ -66,23 +113,42 @@ export function isMentionForwardRequest(
   botOpenId?: string | string[],
 ): boolean {
   const mentions = event.message.mentions ?? [];
-  if (mentions.length === 0) {
+  const botIds = normalizeBotIds(botOpenId);
+  const isDirectMessage = event.message.chat_type === "p2p";
+
+  // Primary check: use API-provided mentions array
+  if (mentions.length > 0) {
+    const hasOtherMention = mentions.some((m) => {
+      const mentionId = resolveMentionId(m);
+      return Boolean(mentionId) && !botIds.has(mentionId);
+    });
+
+    if (isDirectMessage) {
+      // DM: trigger if any non-bot user is mentioned
+      return hasOtherMention;
+    } else {
+      // Group: need to mention both bot and other users
+      const hasBotMention = mentions.some((m) => botIds.has(resolveMentionId(m)));
+      return hasBotMention && hasOtherMention;
+    }
+  }
+
+  // Fallback: scan message content for mention tags (bot-to-bot scenarios)
+  const content = String(event.message.content ?? "");
+  const allMentionedIds = extractMentionIdsFromContent(content);
+  
+  if (allMentionedIds.length === 0) {
     return false;
   }
-  const botIds = normalizeBotIds(botOpenId);
 
-  const isDirectMessage = event.message.chat_type === "p2p";
-  const hasOtherMention = mentions.some((m) => {
-    const mentionId = resolveMentionId(m);
-    return Boolean(mentionId) && !botIds.has(mentionId);
-  });
+  const hasBotMention = allMentionedIds.some((id) => botIds.has(id));
+  const hasOtherMention = allMentionedIds.some((id) => !botIds.has(id));
 
   if (isDirectMessage) {
-    // DM: trigger if any non-bot user is mentioned
+    // DM: trigger if any non-bot mention exists
     return hasOtherMention;
   } else {
-    // Group: need to mention both bot and other users
-    const hasBotMention = mentions.some((m) => botIds.has(resolveMentionId(m)));
+    // Group: need both bot mention and other mentions
     return hasBotMention && hasOtherMention;
   }
 }

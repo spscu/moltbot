@@ -11,6 +11,7 @@ import { resolveFeishuAccount, listEnabledFeishuAccounts } from "./accounts.js";
 import { handleFeishuMessage, type FeishuMessageEvent, type FeishuBotAddedEvent } from "./bot.js";
 import { createFeishuWSClient, createEventDispatcher } from "./client.js";
 import { probeFeishu } from "./probe.js";
+import { isMentionForwardRequest, extractMentionTargets } from "./mention.js";
 
 export type MonitorFeishuOpts = {
   config?: ClawdbotConfig;
@@ -24,6 +25,8 @@ const wsClients = new Map<string, Lark.WSClient>();
 const httpServers = new Map<string, http.Server>();
 const botOpenIds = new Map<string, string>();
 const botIdCandidates = new Map<string, string[]>();
+// Reverse mapping: bot open_id -> account_id (for multi-bot mention forwarding)
+export const botIdToAccountId = new Map<string, string>();
 const FEISHU_WEBHOOK_MAX_BODY_BYTES = 1024 * 1024;
 const FEISHU_WEBHOOK_BODY_TIMEOUT_MS = 30_000;
 
@@ -84,6 +87,41 @@ function registerEventHandlers(
         } else {
           await promise;
         }
+
+        // Forward message to other bots if this message mentions them (multi-bot mention forwarding)
+        // This allows bot-to-bot collaboration via @mentions in group chats
+        const currentBotIds = botIdCandidates.get(accountId) ?? [];
+        if (
+          isMentionForwardRequest(event, currentBotIds) &&
+          event.message.chat_type === "group"
+        ) {
+          const mentionTargets = extractMentionTargets(event, currentBotIds);
+          for (const target of mentionTargets) {
+            const targetAccountId = botIdToAccountId.get(target.openId);
+            if (targetAccountId && targetAccountId !== accountId) {
+              // This mention target is another bot we manage: forward the message to it
+              const targetBotIds = botIdCandidates.get(targetAccountId) ?? [];
+              const forwardPromise = handleFeishuMessage({
+                cfg,
+                event,
+                botOpenId: botOpenIds.get(targetAccountId),
+                botIdCandidates: targetBotIds,
+                runtime,
+                chatHistories,
+                accountId: targetAccountId,
+              });
+              if (fireAndForget) {
+                forwardPromise.catch((err) => {
+                  error(
+                    `feishu[${targetAccountId}]: error handling forwarded message: ${String(err)}`,
+                  );
+                });
+              } else {
+                await forwardPromise;
+              }
+            }
+          }
+        }
       } catch (err) {
         error(`feishu[${accountId}]: error handling message: ${String(err)}`);
       }
@@ -133,6 +171,15 @@ async function monitorSingleAccount(params: MonitorAccountParams): Promise<void>
     .filter(Boolean);
   botOpenIds.set(accountId, botOpenId ?? "");
   botIdCandidates.set(accountId, candidates);
+  
+  // Populate reverse mapping for mention forwarding
+  if (botOpenId) {
+    botIdToAccountId.set(botOpenId, accountId);
+  }
+  for (const id of candidates) {
+    botIdToAccountId.set(id, accountId);
+  }
+  
   log(`feishu[${accountId}]: bot open_id resolved: ${botOpenId ?? "unknown"}`);
 
   const connectionMode = account.config.connectionMode ?? "websocket";

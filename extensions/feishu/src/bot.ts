@@ -8,7 +8,7 @@ import {
 } from "openclaw/plugin-sdk";
 import type { FeishuMessageContext, FeishuMediaInfo, ResolvedFeishuAccount } from "./types.js";
 import type { DynamicAgentCreationConfig } from "./types.js";
-import { resolveFeishuAccount } from "./accounts.js";
+import { resolveFeishuAccount, listEnabledFeishuAccounts } from "./accounts.js";
 import { createFeishuClient } from "./client.js";
 import { tryRecordMessage } from "./dedup.js";
 import { maybeCreateDynamicAgent } from "./dynamic-agent.js";
@@ -193,12 +193,39 @@ function normalizeBotIds(botIdOrIds?: string | string[]): string[] {
 function checkBotMentioned(event: FeishuMessageEvent, botIdOrIds?: string | string[]): boolean {
   const botIds = normalizeBotIds(botIdOrIds);
   const mentions = event.message.mentions ?? [];
-  if (mentions.length === 0) return false;
-  if (botIds.length === 0) return false;
-  return mentions.some((m) => {
-    const ids = [m.id.open_id, m.id.user_id, m.id.union_id].filter(Boolean);
-    return ids.some((id) => botIds.includes(String(id)));
-  });
+  if (mentions.length > 0) {
+    const foundInMentions = mentions.some((m) => {
+      const ids = [m.id.open_id, m.id.user_id, m.id.union_id].filter(Boolean);
+      return ids.some((id) => botIds.includes(String(id)));
+    });
+    if (foundInMentions) return true;
+  }
+
+  // Fallback: scan message content for <at ...> tags containing bot IDs
+  // This is needed for bot-to-bot mentions where Feishu doesn't populate the mentions array
+  // Handles both formats: <at id="ou_...">...</at> and <at user_id="ou_...">...</at>
+  const content = String(event.message.content ?? "");
+  
+  // Check for bot mention patterns in various formats:
+  // 1. <at id="ou_xxx">...</at> or <at id='ou_xxx'>...</at>
+  // 2. <at user_id="ou_xxx">...</at> or <at user_id='ou_xxx'>...</at>  
+  // 3. Raw JSON can contain both: "user_id":"ou_xxx" or "id":"ou_xxx"
+  for (const botId of botIds) {
+    // Pattern 1: id attribute
+    if (new RegExp(`<at\\s+id\\s*=\\s*["']?${botId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["']?\\s*[>\\s]`, "i").test(content)) {
+      return true;
+    }
+    // Pattern 2: user_id attribute
+    if (new RegExp(`<at\\s+user_id\\s*=\\s*["']?${botId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["']?\\s*[>\\s]`, "i").test(content)) {
+      return true;
+    }
+    // Pattern 3: JSON format (in case content contains serialized JSON strings)
+    if (new RegExp(`["']?(?:id|user_id)["']?\\s*:\\s*["']?${botId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["']?`, "i").test(content)) {
+      return true;
+    }
+  }
+  
+  return false;
 }
 
 function stripBotMention(
