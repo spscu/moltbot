@@ -1,0 +1,36 @@
+{
+    "name": "@openclaw/group-awareness",
+    "version": "1.0.0",
+    "private": true,
+    "description": "Enables multi-bot context sharing in group chats via shared file transcript",
+    "type": "module",
+    "main": "index.ts",
+    "dependencies": {
+        "@sinclair/typebox": "0.34.48",
+        "fs-extra": "^11.2.0"
+    },
+    "devDependencies": {
+        "openclaw": "workspace:*",
+        "@types/fs-extra": "^11.0.4"
+    },
+    "openclaw": {
+        "extensions": [
+            "./index.ts"
+        ],
+        "channel": {
+            "id": "group-awareness",
+            "label": "Group Awareness",
+            "selectionLabel": "Group Awareness",
+            "docsPath": "",
+            "docsLabel": "group-awareness",
+            "blurb": "Multi-bot context sharing.",
+            "aliases": [],
+            "order": 100
+        },
+        "install": {
+            "npmSpec": "@openclaw/group-awareness",
+            "localPath": "extensions/group-awareness",
+            "defaultChoice": "npm"
+        }
+    }
+}

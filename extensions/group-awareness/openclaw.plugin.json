@@ -1,0 +1,35 @@
+{
+    "id": "group-awareness",
+    "kind": "process",
+    "name": "Group Awareness",
+    "description": "Enables multi-bot context sharing in group chats via shared file transcript",
+    "configSchema": {
+        "type": "object",
+        "properties": {
+            "enabled": {
+                "type": "boolean",
+                "default": true
+            },
+            "transcriptDir": {
+                "type": "string",
+                "description": "Directory to store shared transcripts"
+            },
+            "maxContextEntries": {
+                "type": "number",
+                "default": 20
+            },
+            "maxAgeMinutes": {
+                "type": "number",
+                "default": 60
+            },
+            "agentNames": {
+                "type": "object",
+                "additionalProperties": {
+                    "type": "string"
+                },
+                "description": "Map internal agent IDs to display names"
+            }
+        },
+        "additionalProperties": false
+    }
+}
