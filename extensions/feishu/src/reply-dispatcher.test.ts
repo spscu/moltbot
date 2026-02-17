@@ -113,4 +113,21 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     expect(sendMessageFeishuMock).not.toHaveBeenCalled();
     expect(sendMarkdownCardFeishuMock).not.toHaveBeenCalled();
   });
+
+  it("forces text send (no card/streaming) when mentionTargets are present", async () => {
+    createFeishuReplyDispatcher({
+      cfg: {} as never,
+      agentId: "agent",
+      runtime: { log: vi.fn(), error: vi.fn() } as never,
+      chatId: "oc_chat",
+      mentionTargets: [{ openId: "ou_be3792c47c0e93a98a69df4b57c56a24", name: "Reviewer", key: "" }],
+    });
+
+    const options = createReplyDispatcherWithTypingMock.mock.calls[0]?.[0];
+    await options.deliver({ text: "```md\n# plan\n```" }, { kind: "final" });
+
+    expect(streamingInstances).toHaveLength(0);
+    expect(sendMessageFeishuMock).toHaveBeenCalledTimes(1);
+    expect(sendMarkdownCardFeishuMock).not.toHaveBeenCalled();
+  });
 });

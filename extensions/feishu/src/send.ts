@@ -17,6 +17,42 @@ export type FeishuMessageInfo = {
   createTime?: number;
 };
 
+function isRetryableFeishuError(err: unknown): boolean {
+  const message = String((err as { message?: string })?.message ?? "").toLowerCase();
+  if (
+    message.includes("socket hang up") ||
+    message.includes("econnreset") ||
+    message.includes("etimedout") ||
+    message.includes("network error")
+  ) {
+    return true;
+  }
+
+  const status = (err as { response?: { status?: number } })?.response?.status;
+  if (typeof status === "number" && [429, 500, 502, 503, 504].includes(status)) {
+    return true;
+  }
+
+  return false;
+}
+
+async function withFeishuRetry<T>(op: () => Promise<T>, maxAttempts = 3): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await op();
+    } catch (err) {
+      lastErr = err;
+      if (attempt >= maxAttempts || !isRetryableFeishuError(err)) {
+        throw err;
+      }
+      const backoffMs = 150 * attempt;
+      await new Promise((resolve) => setTimeout(resolve, backoffMs));
+    }
+  }
+  throw lastErr;
+}
+
 /**
  * Get a message by its ID.
  * Useful for fetching quoted/replied message content.
@@ -101,6 +137,17 @@ export type SendFeishuMessageParams = {
   accountId?: string;
 };
 
+function buildFeishuTextMessagePayload(params: { messageText: string }): {
+  content: string;
+  msgType: string;
+} {
+  const { messageText } = params;
+  return {
+    content: JSON.stringify({ text: messageText }),
+    msgType: "text",
+  };
+}
+
 function buildFeishuPostMessagePayload(params: { messageText: string }): {
   content: string;
   msgType: string;
@@ -121,6 +168,34 @@ function buildFeishuPostMessagePayload(params: { messageText: string }): {
     }),
     msgType: "post",
   };
+}
+
+function normalizeOutgoingMentions(rawText: string): {
+  text: string;
+  hasAtMarkup: boolean;
+} {
+  if (!rawText) return { text: "", hasAtMarkup: false };
+
+  let hasAtMarkup = false;
+  // Normalize legacy card-style mentions to text-message mention format.
+  // Example: <at id=ou_xxx></at> -> <at user_id="ou_xxx">ou_xxx</at>
+  const normalized = rawText.replace(
+    /<at\s+id\s*=\s*["']?([^"'\s>]+)["']?\s*>\s*<\/at>/gi,
+    (_full, id: string) => {
+      const userId = String(id ?? "").trim();
+      if (!userId) return "";
+      hasAtMarkup = true;
+      const displayName = userId === "all" ? "everyone" : userId;
+      return `<at user_id="${userId}">${displayName}</at>`;
+    },
+  );
+
+  // Detect native text mention markup as well.
+  if (/<at\s+user_id\s*=\s*["']?[^"'\s>]+["']?\s*>/i.test(normalized)) {
+    hasAtMarkup = true;
+  }
+
+  return { text: normalized, hasAtMarkup };
 }
 
 export async function sendMessageFeishu(
@@ -149,18 +224,23 @@ export async function sendMessageFeishu(
   if (mentions && mentions.length > 0) {
     rawText = buildMentionedMessage(mentions, rawText);
   }
-  const messageText = getFeishuRuntime().channel.text.convertMarkdownTables(rawText, tableMode);
-
-  const { content, msgType } = buildFeishuPostMessagePayload({ messageText });
+  const mentionNormalized = normalizeOutgoingMentions(rawText);
+  const { content, msgType } = mentionNormalized.hasAtMarkup
+    ? buildFeishuTextMessagePayload({ messageText: mentionNormalized.text })
+    : buildFeishuPostMessagePayload({
+        messageText: getFeishuRuntime().channel.text.convertMarkdownTables(rawText, tableMode),
+      });
 
   if (replyToMessageId) {
-    const response = await client.im.message.reply({
-      path: { message_id: replyToMessageId },
-      data: {
-        content,
-        msg_type: msgType,
-      },
-    });
+    const response = await withFeishuRetry(() =>
+      client.im.message.reply({
+        path: { message_id: replyToMessageId },
+        data: {
+          content,
+          msg_type: msgType,
+        },
+      }),
+    );
 
     if (response.code !== 0) {
       throw new Error(`Feishu reply failed: ${response.msg || `code ${response.code}`}`);
@@ -172,14 +252,16 @@ export async function sendMessageFeishu(
     };
   }
 
-  const response = await client.im.message.create({
-    params: { receive_id_type: receiveIdType },
-    data: {
-      receive_id: receiveId,
-      content,
-      msg_type: msgType,
-    },
-  });
+  const response = await withFeishuRetry(() =>
+    client.im.message.create({
+      params: { receive_id_type: receiveIdType },
+      data: {
+        receive_id: receiveId,
+        content,
+        msg_type: msgType,
+      },
+    }),
+  );
 
   if (response.code !== 0) {
     throw new Error(`Feishu send failed: ${response.msg || `code ${response.code}`}`);
@@ -216,13 +298,15 @@ export async function sendCardFeishu(params: SendFeishuCardParams): Promise<Feis
   const content = JSON.stringify(card);
 
   if (replyToMessageId) {
-    const response = await client.im.message.reply({
-      path: { message_id: replyToMessageId },
-      data: {
-        content,
-        msg_type: "interactive",
-      },
-    });
+    const response = await withFeishuRetry(() =>
+      client.im.message.reply({
+        path: { message_id: replyToMessageId },
+        data: {
+          content,
+          msg_type: "interactive",
+        },
+      }),
+    );
 
     if (response.code !== 0) {
       throw new Error(`Feishu card reply failed: ${response.msg || `code ${response.code}`}`);
@@ -234,14 +318,16 @@ export async function sendCardFeishu(params: SendFeishuCardParams): Promise<Feis
     };
   }
 
-  const response = await client.im.message.create({
-    params: { receive_id_type: receiveIdType },
-    data: {
-      receive_id: receiveId,
-      content,
-      msg_type: "interactive",
-    },
-  });
+  const response = await withFeishuRetry(() =>
+    client.im.message.create({
+      params: { receive_id_type: receiveIdType },
+      data: {
+        receive_id: receiveId,
+        content,
+        msg_type: "interactive",
+      },
+    }),
+  );
 
   if (response.code !== 0) {
     throw new Error(`Feishu card send failed: ${response.msg || `code ${response.code}`}`);

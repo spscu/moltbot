@@ -183,11 +183,22 @@ function parseMessageContent(content: string, messageType: string): string {
   }
 }
 
-function checkBotMentioned(event: FeishuMessageEvent, botOpenId?: string): boolean {
+function normalizeBotIds(botIdOrIds?: string | string[]): string[] {
+  const arr = Array.isArray(botIdOrIds) ? botIdOrIds : [botIdOrIds];
+  return arr
+    .map((v) => String(v ?? "").trim())
+    .filter(Boolean);
+}
+
+function checkBotMentioned(event: FeishuMessageEvent, botIdOrIds?: string | string[]): boolean {
+  const botIds = normalizeBotIds(botIdOrIds);
   const mentions = event.message.mentions ?? [];
   if (mentions.length === 0) return false;
-  if (!botOpenId) return false;
-  return mentions.some((m) => m.id.open_id === botOpenId);
+  if (botIds.length === 0) return false;
+  return mentions.some((m) => {
+    const ids = [m.id.open_id, m.id.user_id, m.id.union_id].filter(Boolean);
+    return ids.some((id) => botIds.includes(String(id)));
+  });
 }
 
 function stripBotMention(
@@ -456,10 +467,10 @@ function buildFeishuMediaPayload(mediaList: FeishuMediaInfo[]): {
 
 export function parseFeishuMessageEvent(
   event: FeishuMessageEvent,
-  botOpenId?: string,
+  botIdOrIds?: string | string[],
 ): FeishuMessageContext {
   const rawContent = parseMessageContent(event.message.content, event.message.message_type);
-  const mentionedBot = checkBotMentioned(event, botOpenId);
+  const mentionedBot = checkBotMentioned(event, botIdOrIds);
   const content = stripBotMention(rawContent, event.message.mentions);
 
   const ctx: FeishuMessageContext = {
@@ -476,8 +487,8 @@ export function parseFeishuMessageEvent(
   };
 
   // Detect mention forward request: message mentions bot + at least one other user
-  if (isMentionForwardRequest(event, botOpenId)) {
-    const mentionTargets = extractMentionTargets(event, botOpenId);
+  if (isMentionForwardRequest(event, botIdOrIds)) {
+    const mentionTargets = extractMentionTargets(event, botIdOrIds);
     if (mentionTargets.length > 0) {
       ctx.mentionTargets = mentionTargets;
       // Extract message body (remove all @ placeholders)
@@ -496,8 +507,9 @@ export async function handleFeishuMessage(params: {
   runtime?: RuntimeEnv;
   chatHistories?: Map<string, HistoryEntry[]>;
   accountId?: string;
+  botIdCandidates?: string[];
 }): Promise<void> {
-  const { cfg, event, botOpenId, runtime, chatHistories, accountId } = params;
+  const { cfg, event, botOpenId, runtime, chatHistories, accountId, botIdCandidates } = params;
 
   // Resolve account with merged config
   const account = resolveFeishuAccount({ cfg, accountId });
@@ -508,13 +520,47 @@ export async function handleFeishuMessage(params: {
 
   // Dedup check: skip if this message was already processed
   const messageId = event.message.message_id;
-  if (!tryRecordMessage(messageId)) {
-    log(`feishu: skipping duplicate message ${messageId}`);
+  if (!tryRecordMessage(messageId, accountId)) {
+    log(`feishu[${account.accountId}]: skipping duplicate message ${messageId}`);
     return;
   }
 
-  let ctx = parseFeishuMessageEvent(event, botOpenId);
+  const effectiveBotIds = botIdCandidates?.length ? botIdCandidates : normalizeBotIds(botOpenId);
+  let ctx = parseFeishuMessageEvent(event, effectiveBotIds);
   const isGroup = ctx.chatType === "group";
+  const senderType = String(event.sender.sender_type ?? "").toLowerCase();
+  const isBotSender = senderType === "bot" || senderType === "app";
+
+  // In multi-bot groups, allow bot-origin messages only from explicit allowlist entries.
+  // This avoids bot-to-bot loops while still enabling manager -> reviewer collaboration.
+  if (isGroup && isBotSender) {
+    const botAllowFrom = (feishuCfg?.botAllowFrom ?? []).map((entry) =>
+      String(entry).trim().toLowerCase(),
+    );
+    const senderCandidates = [ctx.senderOpenId, ctx.senderId]
+      .map((v) => String(v ?? "").trim().toLowerCase())
+      .filter(Boolean);
+    const selfBotIds = new Set(
+      effectiveBotIds.map((id) => String(id).trim().toLowerCase()).filter(Boolean),
+    );
+    const isSelfBot =
+      selfBotIds.size > 0 && senderCandidates.some((candidate) => selfBotIds.has(candidate));
+
+    if (isSelfBot) {
+      log(`feishu[${account.accountId}]: skipping own bot message ${ctx.messageId}`);
+      return;
+    }
+
+    // If botAllowFrom is empty, keep backward-compatible behavior (do not block).
+    const shouldEnforceBotAllowlist = botAllowFrom.length > 0;
+    const allowed = senderCandidates.some((candidate) => botAllowFrom.includes(candidate));
+    if (shouldEnforceBotAllowlist && !allowed) {
+      log(
+        `feishu[${account.accountId}]: blocked bot sender (${senderType}) ${senderCandidates.join(",") || "unknown"} (not in botAllowFrom)`,
+      );
+      return;
+    }
+  }
 
   // Resolve sender display name (best-effort) so the agent can attribute messages correctly.
   const senderResult = await resolveFeishuSenderName({
@@ -678,11 +724,11 @@ export async function handleFeishuMessage(params: {
     }).allowed;
     const commandAuthorized = shouldComputeCommandAuthorized
       ? core.channel.commands.resolveCommandAuthorizedFromAuthorizers({
-          useAccessGroups,
-          authorizers: [
-            { configured: commandAllowFrom.length > 0, allowed: senderAllowedForCommands },
-          ],
-        })
+        useAccessGroups,
+        authorizers: [
+          { configured: commandAllowFrom.length > 0, allowed: senderAllowedForCommands },
+        ],
+      })
       : undefined;
 
     // In group chats, the session is scoped to the group, but the *speaker* is the sender.
@@ -902,10 +948,10 @@ export async function handleFeishuMessage(params: {
     const inboundHistory =
       isGroup && historyKey && historyLimit > 0 && chatHistories
         ? (chatHistories.get(historyKey) ?? []).map((entry) => ({
-            sender: entry.sender,
-            body: entry.body,
-            timestamp: entry.timestamp,
-          }))
+          sender: entry.sender,
+          body: entry.body,
+          timestamp: entry.timestamp,
+        }))
         : undefined;
 
     const ctxPayload = core.channel.reply.finalizeInboundContext({

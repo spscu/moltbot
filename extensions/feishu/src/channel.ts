@@ -87,6 +87,10 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount> = {
         webhookPort: { type: "integer", minimum: 1 },
         dmPolicy: { type: "string", enum: ["open", "pairing", "allowlist"] },
         allowFrom: { type: "array", items: { oneOf: [{ type: "string" }, { type: "number" }] } },
+        botAllowFrom: {
+          type: "array",
+          items: { oneOf: [{ type: "string" }, { type: "number" }] },
+        },
         groupPolicy: { type: "string", enum: ["open", "allowlist", "disabled"] },
         groupAllowFrom: {
           type: "array",
@@ -113,6 +117,10 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount> = {
               verificationToken: { type: "string" },
               domain: { type: "string", enum: ["feishu", "lark"] },
               connectionMode: { type: "string", enum: ["websocket", "webhook"] },
+              botAllowFrom: {
+                type: "array",
+                items: { oneOf: [{ type: "string" }, { type: "number" }] },
+              },
             },
           },
         },

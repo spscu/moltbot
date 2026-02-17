@@ -73,8 +73,10 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
   });
   const chunkMode = core.channel.text.resolveChunkMode(cfg, "feishu");
   const tableMode = core.channel.text.resolveMarkdownTableMode({ cfg, channel: "feishu" });
+  const forceTextForMentions = Boolean(mentionTargets?.length);
   const renderMode = account.config?.renderMode ?? "auto";
-  const streamingEnabled = account.config?.streaming !== false && renderMode !== "raw";
+  const streamingEnabled =
+    account.config?.streaming !== false && renderMode !== "raw" && !forceTextForMentions;
 
   let streaming: FeishuStreamingSession | null = null;
   let streamText = "";
@@ -142,7 +144,9 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
           return;
         }
 
-        const useCard = renderMode === "card" || (renderMode === "auto" && shouldUseCard(text));
+        const useCard =
+          !forceTextForMentions &&
+          (renderMode === "card" || (renderMode === "auto" && shouldUseCard(text)));
 
         if ((info?.kind === "block" || info?.kind === "final") && streamingEnabled && useCard) {
           startStreaming();

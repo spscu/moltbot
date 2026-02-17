@@ -33,6 +33,8 @@ export async function probeFeishu(creds?: FeishuClientCredentials): Promise<Feis
       appId: creds.appId,
       botName: bot?.bot_name,
       botOpenId: bot?.open_id,
+      botUserId: bot?.user_id,
+      botUnionId: bot?.union_id,
     };
   } catch (err) {
     return {

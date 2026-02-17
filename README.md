@@ -104,6 +104,64 @@ pnpm gateway:watch
 
 Note: `pnpm openclaw ...` runs TypeScript directly (via `tsx`). `pnpm build` produces `dist/` for running via Node / the packaged `openclaw` binary.
 
+## Git workflow (local changes + upstream sync)
+
+This repository is configured in a dual-remote setup so you can keep local changes while continuously syncing updates from the official project.
+
+Current remote mapping in this clone:
+
+```bash
+upstream = https://github.com/openclaw/openclaw.git
+origin   = https://github.com/spscu/moltbot.git
+```
+
+Recommended daily workflow:
+
+1. Create features on a branch (do not develop directly on `main`):
+
+```bash
+git checkout -b feat/your-change
+# ...work...
+git add .
+git commit -m "feat: your change"
+git push -u origin feat/your-change
+```
+
+2. Sync latest official updates into local `main`:
+
+```bash
+git fetch upstream
+git checkout main
+git rebase upstream/main
+git push origin main
+```
+
+3. Rebase your feature branch onto updated `main`:
+
+```bash
+git checkout feat/your-change
+git rebase main
+# resolve conflicts if needed, then:
+git add .
+git rebase --continue
+```
+
+If you have uncommitted work before syncing:
+
+```bash
+git stash push -m "wip before upstream sync"
+git fetch upstream
+git checkout main
+git rebase upstream/main
+git stash pop
+```
+
+Conflict minimization tips:
+
+- Keep commits small and focused.
+- Rebase from `upstream/main` frequently.
+- Avoid long-lived branches drifting too far from `main`.
+
 ## Security defaults (DM access)
 
 OpenClaw connects to real messaging surfaces. Treat inbound DMs as **untrusted input**.

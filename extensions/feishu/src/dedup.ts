@@ -5,8 +5,9 @@ const DEDUP_CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // cleanup every 5 minutes
 const processedMessageIds = new Map<string, number>(); // messageId -> timestamp
 let lastCleanupTime = Date.now();
 
-export function tryRecordMessage(messageId: string): boolean {
+export function tryRecordMessage(messageId: string, accountId?: string): boolean {
   const now = Date.now();
+  const key = accountId ? `${accountId}:${messageId}` : messageId;
 
   // Throttled cleanup: evict expired entries at most once per interval.
   if (now - lastCleanupTime > DEDUP_CLEANUP_INTERVAL_MS) {
@@ -18,7 +19,7 @@ export function tryRecordMessage(messageId: string): boolean {
     lastCleanupTime = now;
   }
 
-  if (processedMessageIds.has(messageId)) {
+  if (processedMessageIds.has(key)) {
     return false;
   }
 
@@ -28,6 +29,6 @@ export function tryRecordMessage(messageId: string): boolean {
     processedMessageIds.delete(first);
   }
 
-  processedMessageIds.set(messageId, now);
+  processedMessageIds.set(key, now);
   return true;
 }

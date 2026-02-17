@@ -23,15 +23,25 @@ export type MonitorFeishuOpts = {
 const wsClients = new Map<string, Lark.WSClient>();
 const httpServers = new Map<string, http.Server>();
 const botOpenIds = new Map<string, string>();
+const botIdCandidates = new Map<string, string[]>();
 const FEISHU_WEBHOOK_MAX_BODY_BYTES = 1024 * 1024;
 const FEISHU_WEBHOOK_BODY_TIMEOUT_MS = 30_000;
 
-async function fetchBotOpenId(account: ResolvedFeishuAccount): Promise<string | undefined> {
+async function fetchBotIdentity(account: ResolvedFeishuAccount): Promise<{
+  openId?: string;
+  userId?: string;
+  unionId?: string;
+}> {
   try {
     const result = await probeFeishu(account);
-    return result.ok ? result.botOpenId : undefined;
+    if (!result.ok) return {};
+    return {
+      openId: result.botOpenId,
+      userId: result.botUserId,
+      unionId: result.botUnionId,
+    };
   } catch {
-    return undefined;
+    return {};
   }
 }
 
@@ -62,6 +72,7 @@ function registerEventHandlers(
           cfg,
           event,
           botOpenId: botOpenIds.get(accountId),
+          botIdCandidates: botIdCandidates.get(accountId),
           runtime,
           chatHistories,
           accountId,
@@ -114,9 +125,14 @@ async function monitorSingleAccount(params: MonitorAccountParams): Promise<void>
   const { accountId } = account;
   const log = runtime?.log ?? console.log;
 
-  // Fetch bot open_id
-  const botOpenId = await fetchBotOpenId(account);
+  // Fetch bot identity ids
+  const identity = await fetchBotIdentity(account);
+  const botOpenId = identity.openId;
+  const candidates = [identity.openId, identity.userId, identity.unionId]
+    .map((v) => String(v ?? "").trim())
+    .filter(Boolean);
   botOpenIds.set(accountId, botOpenId ?? "");
+  botIdCandidates.set(accountId, candidates);
   log(`feishu[${accountId}]: bot open_id resolved: ${botOpenId ?? "unknown"}`);
 
   const connectionMode = account.config.connectionMode ?? "websocket";
@@ -162,6 +178,7 @@ async function monitorWebSocket({
     const cleanup = () => {
       wsClients.delete(accountId);
       botOpenIds.delete(accountId);
+      botIdCandidates.delete(accountId);
     };
 
     const handleAbort = () => {
@@ -231,6 +248,7 @@ async function monitorWebhook({
       server.close();
       httpServers.delete(accountId);
       botOpenIds.delete(accountId);
+      botIdCandidates.delete(accountId);
     };
 
     const handleAbort = () => {
@@ -319,6 +337,7 @@ export function stopFeishuMonitor(accountId?: string): void {
       httpServers.delete(accountId);
     }
     botOpenIds.delete(accountId);
+    botIdCandidates.delete(accountId);
   } else {
     wsClients.clear();
     for (const server of httpServers.values()) {
@@ -326,5 +345,6 @@ export function stopFeishuMonitor(accountId?: string): void {
     }
     httpServers.clear();
     botOpenIds.clear();
+    botIdCandidates.clear();
   }
 }

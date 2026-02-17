@@ -4,7 +4,11 @@ import { parseFeishuMessageEvent } from "./bot.js";
 // Helper to build a minimal FeishuMessageEvent for testing
 function makeEvent(
   chatType: "p2p" | "group",
-  mentions?: Array<{ key: string; name: string; id: { open_id?: string } }>,
+  mentions?: Array<{
+    key: string;
+    name: string;
+    id: { open_id?: string; user_id?: string; union_id?: string };
+  }>,
 ) {
   return {
     sender: {
@@ -34,6 +38,12 @@ describe("parseFeishuMessageEvent – mentionedBot", () => {
     const event = makeEvent("group", [
       { key: "@_user_1", name: "Bot", id: { open_id: BOT_OPEN_ID } },
     ]);
+    const ctx = parseFeishuMessageEvent(event as any, BOT_OPEN_ID);
+    expect(ctx.mentionedBot).toBe(true);
+  });
+
+  it("returns mentionedBot=true when mention id uses user_id field", () => {
+    const event = makeEvent("group", [{ key: "@_user_1", name: "Bot", id: { user_id: BOT_OPEN_ID } }]);
     const ctx = parseFeishuMessageEvent(event as any, BOT_OPEN_ID);
     expect(ctx.mentionedBot).toBe(true);
   });

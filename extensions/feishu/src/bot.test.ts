@@ -262,4 +262,84 @@ describe("handleFeishuMessage command authorization", () => {
       }),
     );
   });
+
+  it("blocks bot-origin group messages when sender is not in a configured botAllowFrom", async () => {
+    const cfg: ClawdbotConfig = {
+      channels: {
+        feishu: {
+          groups: {
+            "oc-group": {
+              requireMention: false,
+            },
+          },
+          botAllowFrom: ["ou-some-other-bot"],
+        },
+      },
+    } as ClawdbotConfig;
+
+    const event: FeishuMessageEvent = {
+      sender: {
+        sender_id: {
+          open_id: "ou-manager-bot",
+        },
+        sender_type: "bot",
+      },
+      message: {
+        message_id: "msg-group-bot-blocked",
+        chat_id: "oc-group",
+        chat_type: "group",
+        message_type: "text",
+        content: JSON.stringify({ text: "review this" }),
+      },
+    };
+
+    await handleFeishuMessage({
+      cfg,
+      event,
+      runtime: { log: vi.fn(), error: vi.fn() } as RuntimeEnv,
+    });
+
+    expect(mockFinalizeInboundContext).not.toHaveBeenCalled();
+    expect(mockDispatchReplyFromConfig).not.toHaveBeenCalled();
+  });
+
+  it("allows bot-origin group messages when sender is listed in botAllowFrom", async () => {
+    const cfg: ClawdbotConfig = {
+      channels: {
+        feishu: {
+          groups: {
+            "oc-group": {
+              requireMention: false,
+            },
+          },
+          botAllowFrom: ["ou-manager-bot"],
+        },
+      },
+    } as ClawdbotConfig;
+
+    const event: FeishuMessageEvent = {
+      sender: {
+        sender_id: {
+          open_id: "ou-manager-bot",
+        },
+        sender_type: "bot",
+      },
+      message: {
+        message_id: "msg-group-bot-allowed",
+        chat_id: "oc-group",
+        chat_type: "group",
+        message_type: "text",
+        content: JSON.stringify({ text: "review this" }),
+      },
+    };
+
+    await handleFeishuMessage({
+      cfg,
+      event,
+      runtime: { log: vi.fn(), error: vi.fn() } as RuntimeEnv,
+    });
+
+    expect(mockFinalizeInboundContext).toHaveBeenCalledTimes(1);
+    expect(mockDispatchReplyFromConfig).toHaveBeenCalledTimes(1);
+  });
 });
