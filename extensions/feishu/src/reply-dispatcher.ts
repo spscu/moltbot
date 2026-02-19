@@ -11,6 +11,7 @@ import { resolveFeishuAccount } from "./accounts.js";
 import { createFeishuClient } from "./client.js";
 import { buildMentionedCardContent } from "./mention.js";
 import { getFeishuRuntime } from "./runtime.js";
+import { forwardMessageToMentionedBots } from "./forward.js";
 import { sendMarkdownCardFeishu, sendMessageFeishu } from "./send.js";
 import { FeishuStreamingSession } from "./streaming-card.js";
 import { resolveReceiveIdType } from "./targets.js";
@@ -198,6 +199,20 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
             first = false;
           }
         }
+
+        // Forward to mentioned bots (fire-and-forget, group only)
+        if (chatId.startsWith("oc_")) {
+          void forwardMessageToMentionedBots({
+            cfg,
+            content: text,
+            chatId,
+            chatType: "group",
+            senderAccountId: accountId ?? account.accountId,
+            runtime: params.runtime,
+          }).catch((err) => {
+            params.runtime.error?.(`feishu[${account.accountId}]: forwarding failed: ${String(err)}`);
+          });
+        }
       },
       onError: async (error, info) => {
         params.runtime.error?.(
@@ -222,20 +237,20 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       onModelSelected: prefixContext.onModelSelected,
       onPartialReply: streamingEnabled
         ? (payload: ReplyPayload) => {
-            if (!payload.text || payload.text === lastPartial) {
-              return;
-            }
-            lastPartial = payload.text;
-            streamText = payload.text;
-            partialUpdateQueue = partialUpdateQueue.then(async () => {
-              if (streamingStartPromise) {
-                await streamingStartPromise;
-              }
-              if (streaming?.isActive()) {
-                await streaming.update(streamText);
-              }
-            });
+          if (!payload.text || payload.text === lastPartial) {
+            return;
           }
+          lastPartial = payload.text;
+          streamText = payload.text;
+          partialUpdateQueue = partialUpdateQueue.then(async () => {
+            if (streamingStartPromise) {
+              await streamingStartPromise;
+            }
+            if (streaming?.isActive()) {
+              await streaming.update(streamText);
+            }
+          });
+        }
         : undefined,
     },
     markDispatchIdle,

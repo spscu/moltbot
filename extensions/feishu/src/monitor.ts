@@ -51,15 +51,6 @@ async function fetchBotIdentity(account: ResolvedFeishuAccount): Promise<{
   }
 }
 
-/**
- * Process bot-to-bot mention forwarding for outgoing messages.
- * When a bot sends a message that mentions another bot in a group,
- * that message is also forwarded to the mentioned bot for processing.
- *
- * This enables scenarios like: Manager bot sending "@Reviewer please review this"
- * -> Reviewer bot also processes that message as input
- */
-
 
 /**
  * Register common event handlers on an EventDispatcher.
