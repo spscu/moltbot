@@ -115,21 +115,27 @@ function findMentionedBotAccounts(
     const matched = new Set<string>();
 
     // Strategy 1: Scan for plain text @BotName mentions
-    // This is the primary method since LLMs output plain text like "@Reviewer"
+    // This is common for LLM outputs
     for (const [accountId, name] of botNames) {
         if (accountId === senderAccountId) continue;
 
         const nameRegex = new RegExp(`@${escapeRegex(name)}\\b`, "i");
         const found = nameRegex.test(content);
-        log(`feishu: scanning for @${name} (account=${accountId}): ${found ? "FOUND" : "not found"}`);
         if (found) {
+            log(`feishu: found plain text mention for @${name} (account=${accountId})`);
             matched.add(accountId);
+        } else {
+            // Also log Strategy 1 scan for debugging
+            log(`feishu: scanning for @${name} (account=${accountId}): not found`);
         }
     }
 
-    // Strategy 2: Scan for <at id="..."> tags (Feishu format)
-    // Less common for LLM outputs but handles cases where content has raw Feishu tags
+    // Strategy 2: Scan for <at id="..."> or <at user_id="..."> tags (Feishu format)
+    // and match by either ID or the Name inside the tag
     const atIdPatterns = [
+        /<at\s+id\s*=\s*["']?([^"'\s>]+)["']?\s*>([^<]*)<\/at>/gi,
+        /<at\s+user_id\s*=\s*["']?([^"'\s>]+)["']?\s*>([^<]*)<\/at>/gi,
+        // Also support tags without closing tag if they end with >
         /<at\s+id\s*=\s*["']?([^"'\s>]+)["']?\s*[>\s]/gi,
         /<at\s+user_id\s*=\s*["']?([^"'\s>]+)["']?\s*[>\s]/gi,
     ];
@@ -141,15 +147,34 @@ function findMentionedBotAccounts(
 
     for (const pattern of atIdPatterns) {
         let match;
+        pattern.lastIndex = 0; // Reset regex state
         while ((match = pattern.exec(content)) !== null) {
             const id = match[1]?.trim();
+            const nameInTag = match[2]?.trim();
+
             if (!id || senderBotIds.has(id)) continue;
 
-            // Look up which account this ID belongs to
+            // Step A: Try to match by OpenID (Fastest/Strongest)
+            let idMatched = false;
             for (const [accountId, candidates] of botIdCandidates) {
                 if (accountId === senderAccountId) continue;
                 if (candidates.some((c) => c === id)) {
+                    log(`feishu: found tag mention by ID=${id} (account=${accountId})`);
                     matched.add(accountId);
+                    idMatched = true;
+                    break;
+                }
+            }
+
+            // Step B: Fallback - Match by Name if Step A failed (Strongest fallback for non-probed bots)
+            if (!idMatched && nameInTag) {
+                for (const [accountId, name] of botNames) {
+                    if (accountId === senderAccountId) continue;
+                    if (nameInTag.toLowerCase() === name.toLowerCase()) {
+                        log(`feishu: found tag mention by Name="${nameInTag}" (account=${accountId}, ID ${id} was not cached)`);
+                        matched.add(accountId);
+                        break;
+                    }
                 }
             }
         }
