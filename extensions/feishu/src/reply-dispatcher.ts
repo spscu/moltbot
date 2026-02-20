@@ -55,14 +55,14 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     },
     onStartError: (err) =>
       logTypingFailure({
-        log: (message) => params.runtime.log?.(message),
+        log: (message) => params.runtime?.log?.(message),
         channel: "feishu",
         action: "start",
         error: err,
       }),
     onStopError: (err) =>
       logTypingFailure({
-        log: (message) => params.runtime.log?.(message),
+        log: (message) => params.runtime?.log?.(message),
         channel: "feishu",
         action: "stop",
         error: err,
@@ -99,12 +99,12 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       }
 
       streaming = new FeishuStreamingSession(createFeishuClient(account), creds, (message) =>
-        params.runtime.log?.(`feishu[${account.accountId}] ${message}`),
+        params.runtime?.log?.(`feishu[${account.accountId}] ${message}`),
       );
       try {
         await streaming.start(chatId, resolveReceiveIdType(chatId));
       } catch (error) {
-        params.runtime.error?.(`feishu: streaming start failed: ${String(error)}`);
+        params.runtime?.error?.(`feishu: streaming start failed: ${String(error)}`);
         streaming = null;
       }
     })();
@@ -210,12 +210,12 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
             senderAccountId: accountId ?? account.accountId,
             runtime: params.runtime,
           }).catch((err) => {
-            params.runtime.error?.(`feishu[${account.accountId}]: forwarding failed: ${String(err)}`);
+            params.runtime?.error?.(`feishu[${account.accountId}]: forwarding failed: ${String(err)}`);
           });
         }
       },
       onError: async (error, info) => {
-        params.runtime.error?.(
+        params.runtime?.error?.(
           `feishu[${account.accountId}] ${info.kind} reply failed: ${String(error)}`,
         );
         await closeStreaming();
